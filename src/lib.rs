@@ -4,8 +4,7 @@
 //!
 //! - `commands.trigger(StartBevySplashscreen)` to play the splash.
 //! - `commands.trigger(SkipBevySplashscreen)` to end it early.
-//! - `app.add_observer(|_: On<BevySplashscreenEnded>, ...| ...)` to react
-//!   when it finishes (either naturally or via skip).
+//! - `app.add_observer(|_: On<BevySplashscreenEnded>, ...| ...)` to react to end.
 
 use bevy::prelude::*;
 use bevy_vello::{integrations::svg::load_svg_from_str, prelude::*};
@@ -20,32 +19,24 @@ const BIRD_COLORS: [&str; 3] = ["#ececec", "#b2b2b2", "#787878"];
 const BIRD_NAMES: [&str; 3] = ["Birb 0 (front)", "Birb 1 (middle)", "Birb 2 (back)"];
 
 // TODO: These should all really just be configurable at the fade/keyframe callsite or something.
-const BIRD_SCALE: f32 = 6.0;
 const FADE_DURATION: f32 = 0.6;
 const KEYFRAME_DURATION: f32 = 0.7;
 const HOLD_DURATION: f32 = 1.1;
-const BIRD_ANCHOR: Vec2 = Vec2::new(-110.0, 25.0);
 const BIRD_SLIDE_OFFSET: f32 = 20.0;
 
 const SPLASH_CAMERA_ORDER: isize = 9999;
 
+#[derive(Default)]
 pub struct BevySplashscreenPlugin;
-
-impl Default for BevySplashscreenPlugin {
-    fn default() -> Self {
-        Self
-    }
-}
 
 impl Plugin for BevySplashscreenPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SplashBg(Color::srgb_u8(0x23, 0x23, 0x26)))
-            .register_type::<Bird>()
             .register_type::<Fade>()
             .register_type::<KeyframeInterp>()
+            .register_type::<KeyFrame>()
             .add_observer(on_start)
             .add_observer(on_skip)
-            .add_observer(on_splash_event)
             .add_observer(on_trigger_fade)
             .add_observer(on_trigger_keyframe)
             .add_systems(Update, (splash_dispatch, elapsed, fade, keyframe).chain());
@@ -56,12 +47,11 @@ impl Plugin for BevySplashscreenPlugin {
 #[derive(Event, Default)]
 pub struct StartBevySplashscreen;
 
-/// Trigger this to end the splash immediately. Emits [`BevySplashscreenEnded`].
+/// Trigger this to end the splash immediately
 #[derive(Event, Default)]
 pub struct SkipBevySplashscreen;
 
-/// Emitted after the splash finishes — either by completing naturally or via
-/// [`SkipBevySplashscreen`].
+/// Emitted after the splash finishes
 #[derive(Event, Default)]
 pub struct BevySplashscreenEnded;
 
@@ -70,12 +60,6 @@ struct SplashBg(Color);
 
 #[derive(Component)]
 struct SplashEntity;
-
-#[derive(Component, Reflect)]
-#[reflect(Component)]
-struct Bird {
-    index: u8,
-}
 
 #[derive(Reflect, Clone, Default)]
 struct KeyFrame {
@@ -127,7 +111,6 @@ fn bird_keyframes() -> [KeyFrame; 3] {
 #[derive(Resource)]
 struct Splash {
     elapsed: f32,
-    fired_end: bool,
 
     birds: [Entity; 3],
     built: Entity,
@@ -157,9 +140,9 @@ fn on_start(
         let c = bg.0.to_srgba();
         format!(
             "#{:02x}{:02x}{:02x}",
-            (c.red * 255.0) as u8,
-            (c.green * 255.0) as u8,
-            (c.blue * 255.0) as u8
+            (c.red * 255.0).round() as u8,
+            (c.green * 255.0).round() as u8,
+            (c.blue * 255.0).round() as u8
         )
     };
 
@@ -244,14 +227,9 @@ fn on_start(
             Name::new("Tail/wing cutoff"),
             VelloSvg2d(cutoff_svg),
             VelloSvgAnchor::Center,
-            Transform {
-                translation: cutoff_keyframe.start.translation,
-                rotation: cutoff_rotation,
-                scale: cutoff_scale,
-            },
+            cutoff_keyframe.start,
             Visibility::Hidden,
             KeyframeInterp::from_keyframe(cutoff_keyframe),
-            SplashEntity,
         ))
         .id();
 
@@ -277,24 +255,18 @@ fn on_start(
     let mut birds = [Entity::PLACEHOLDER; 3];
     let keyframes = bird_keyframes();
     for index in 0u8..3 {
-        let z: f32 = match index {
-            0 => 3.0,
-            1 => 1.0,
-            _ => 0.0,
-        };
+        let keyframe = keyframes[index as usize].clone();
 
         let mut bird_cmds = commands.spawn((
             Name::new(BIRD_NAMES[index as usize]),
             VelloSvg2d(bodies[index as usize].clone()),
             VelloSvgAnchor::Center,
-            Transform::from_xyz(BIRD_ANCHOR.x, BIRD_ANCHOR.y, z)
-                .with_scale(Vec3::splat(BIRD_SCALE)),
+            keyframe.start,
             Visibility::Hidden,
-            Bird { index },
             KeyframeInterp {
                 start: false,
                 elapsed: 0.0,
-                keyframe: keyframes[index as usize].clone(),
+                keyframe,
 
                 translation: EaseFunction::BackInOut,
                 rotation: EaseFunction::BackInOut,
@@ -312,7 +284,6 @@ fn on_start(
 
     commands.insert_resource(Splash {
         elapsed: 0.0,
-        fired_end: false,
         birds,
         built,
         with,
@@ -331,28 +302,24 @@ fn on_skip(
     if splash.is_none() {
         return;
     }
-    for entity in &splash_entities {
+    end_splash(&mut commands, &splash_entities);
+}
+
+/// Despawns every splash entity
+fn end_splash(commands: &mut Commands, splash_entities: &Query<Entity, With<SplashEntity>>) {
+    for entity in splash_entities.iter() {
         commands.entity(entity).despawn();
     }
     commands.remove_resource::<Splash>();
     commands.trigger(BevySplashscreenEnded);
 }
 
-#[derive(Event)]
-enum SplashEvent {
+/// A scheduled action on the splash timeline, applied by [`splash_dispatch`]
+/// once its time is crossed.
+enum Step {
     Fade(Entity),
     Keyframe(Entity),
     Show(Entity),
-}
-
-fn on_splash_event(on: On<SplashEvent>, mut commands: Commands) {
-    match on.event() {
-        SplashEvent::Fade(entity) => commands.trigger(TriggerFade { entity: *entity }),
-        SplashEvent::Keyframe(entity) => commands.trigger(TriggerKeyFrame { entity: *entity }),
-        SplashEvent::Show(entity) => {
-            commands.entity(*entity).insert(Visibility::Visible);
-        }
-    }
 }
 
 #[derive(EntityEvent)]
@@ -383,6 +350,7 @@ fn on_trigger_keyframe(on: On<TriggerKeyFrame>, mut keyed: Query<&mut KeyframeIn
 }
 
 #[derive(Component, Reflect)]
+#[reflect(Component)]
 struct Fade {
     start: bool,
     elapsed: f32,
@@ -402,6 +370,7 @@ impl Default for Fade {
 }
 
 #[derive(Component, Reflect)]
+#[reflect(Component)]
 struct KeyframeInterp {
     start: bool,
     elapsed: f32,
@@ -454,51 +423,52 @@ fn splash_dispatch(
     let mut tasks = Vec::new();
     let mut c = 0.0;
     tasks.extend([
-        (c, SplashEvent::Fade(splash.birds[0])),
-        (c, SplashEvent::Fade(splash.built)),
-        (c, SplashEvent::Fade(splash.with)),
-        (c, SplashEvent::Fade(splash.bevy)),
+        (c, Step::Fade(splash.birds[0])),
+        (c, Step::Fade(splash.built)),
+        (c, Step::Fade(splash.with)),
+        (c, Step::Fade(splash.bevy)),
     ]);
 
     c += FADE_DURATION;
     tasks.extend([
-        (c, SplashEvent::Show(splash.cutoff)),
-        (c, SplashEvent::Show(splash.birds[1])),
-        (c, SplashEvent::Show(splash.birds[2])),
-        (c, SplashEvent::Keyframe(splash.birds[1])),
-        (c, SplashEvent::Keyframe(splash.birds[2])),
-        (c, SplashEvent::Keyframe(splash.cutoff)),
-        (c, SplashEvent::Keyframe(splash.birds[0])),
+        (c, Step::Show(splash.cutoff)),
+        (c, Step::Show(splash.birds[1])),
+        (c, Step::Show(splash.birds[2])),
+        (c, Step::Keyframe(splash.birds[1])),
+        (c, Step::Keyframe(splash.birds[2])),
+        (c, Step::Keyframe(splash.cutoff)),
+        (c, Step::Keyframe(splash.birds[0])),
     ]);
 
     c += KEYFRAME_DURATION + HOLD_DURATION;
-    tasks.push((c, SplashEvent::Fade(splash.overlay)));
+    tasks.push((c, Step::Fade(splash.overlay)));
     c += FADE_DURATION;
 
-    for (t, event) in tasks {
+    for (t, step) in tasks {
         if t >= last && t < splash.elapsed {
-            commands.trigger(event);
+            match step {
+                Step::Fade(entity) => commands.trigger(TriggerFade { entity }),
+                Step::Keyframe(entity) => commands.trigger(TriggerKeyFrame { entity }),
+                Step::Show(entity) => {
+                    commands.entity(entity).insert(Visibility::Visible);
+                }
+            }
         }
     }
 
-    if !splash.fired_end && splash.elapsed >= c {
-        splash.fired_end = true;
-        for entity in &splash_entities {
-            commands.entity(entity).despawn();
-        }
-        commands.remove_resource::<Splash>();
-        commands.trigger(BevySplashscreenEnded);
+    if splash.elapsed >= c {
+        end_splash(&mut commands, &splash_entities);
     }
 }
 
 fn fade(fades: Query<(&Fade, &VelloSvg2d)>, mut svgs: ResMut<Assets<VelloSvg>>) {
     for (fade, vello) in &fades {
-        let alpha = if fade.start {
-            let t = (fade.elapsed / FADE_DURATION).clamp(0.0, 1.0);
-            fade.from + (fade.to - fade.from) * t
-        } else {
-            fade.from
-        };
+        if !fade.start {
+            continue;
+        }
+
+        let t = (fade.elapsed / FADE_DURATION).clamp(0.0, 1.0);
+        let alpha = fade.from + (fade.to - fade.from) * t;
         if let Some(svg) = svgs.get_mut(&vello.0) {
             svg.alpha = alpha;
         }
@@ -507,6 +477,10 @@ fn fade(fades: Query<(&Fade, &VelloSvg2d)>, mut svgs: ResMut<Assets<VelloSvg>>) 
 
 fn keyframe(mut keyed: Query<(&mut Transform, &KeyframeInterp)>) {
     for (mut transform, interp) in &mut keyed {
+        if !interp.start {
+            continue;
+        }
+
         transform.translation = interp.keyframe.start.translation.lerp(
             interp.keyframe.end.translation,
             interp

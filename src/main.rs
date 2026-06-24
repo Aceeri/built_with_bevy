@@ -1,19 +1,8 @@
-use bevy::{
-    asset::AssetMetaCheck,
-    diagnostic::{
-        EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin,
-        SystemInformationDiagnosticsPlugin,
-    },
-    input::common_conditions::input_toggle_active,
-    prelude::*,
-    window::PresentMode,
-};
-use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
+use bevy::{asset::AssetMetaCheck, prelude::*, window::PresentMode};
 use bevy_vello::VelloPlugin;
 use built_with_bevy::{
     BevySplashscreenEnded, BevySplashscreenPlugin, SkipBevySplashscreen, StartBevySplashscreen,
 };
-use iyes_perf_ui::prelude::*;
 
 fn main() {
     App::new()
@@ -32,14 +21,6 @@ fn main() {
                 }),
         )
         .add_plugins(VelloPlugin::default())
-        .add_plugins(EguiPlugin::default())
-        // .add_plugins(
-        //     WorldInspectorPlugin::default().run_if(input_toggle_active(true, KeyCode::Escape)),
-        // )
-        // .add_plugins(FrameTimeDiagnosticsPlugin::default())
-        // .add_plugins(EntityCountDiagnosticsPlugin::default())
-        // .add_plugins(SystemInformationDiagnosticsPlugin)
-        // .add_plugins(PerfUiPlugin)
         .add_plugins(BevySplashscreenPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(Update, debug_keys)
@@ -48,25 +29,6 @@ fn main() {
 }
 
 fn setup(mut commands: Commands) {
-    commands.spawn((
-        PerfUiRoot {
-            display_labels: true,
-            fontsize_label: 10.0,
-            fontsize_value: 10.0,
-            values_col_width: 50.0,
-            inner_margin: -2.0,
-            inner_padding: -2.0,
-            ..default()
-        },
-        PerfUiEntryFPS::default(),
-        PerfUiEntryFPSAverage::default(),
-        PerfUiEntryFPSWorst::default(),
-        PerfUiEntryFrameTimeWorst::default(),
-        PerfUiEntryEntityCount::default(),
-        PerfUiEntryCpuUsage::default(),
-        PerfUiEntryMemUsage::default(),
-    ));
-
     commands.trigger(StartBevySplashscreen);
 }
 
