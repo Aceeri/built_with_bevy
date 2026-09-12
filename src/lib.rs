@@ -411,6 +411,7 @@ fn splash_dispatch(
     time: Res<Time>,
     splash: Option<ResMut<Splash>>,
     splash_entities: Query<Entity, With<SplashEntity>>,
+    fades: Query<&Fade>,
     mut commands: Commands,
 ) {
     let Some(mut splash) = splash else {
@@ -442,7 +443,6 @@ fn splash_dispatch(
 
     c += KEYFRAME_DURATION + HOLD_DURATION;
     tasks.push((c, Step::Fade(splash.overlay)));
-    c += FADE_DURATION;
 
     for (t, step) in tasks {
         if t >= last && t < splash.elapsed {
@@ -456,7 +456,10 @@ fn splash_dispatch(
         }
     }
 
-    if splash.elapsed >= c {
+    let overlay_covered = fades
+        .get(splash.overlay)
+        .is_ok_and(|fade| fade.start && fade.elapsed >= FADE_DURATION);
+    if overlay_covered {
         end_splash(&mut commands, &splash_entities);
     }
 }
