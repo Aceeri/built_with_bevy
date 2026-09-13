@@ -18,17 +18,70 @@ const WITH_SVG: &str = include_str!("../assets/with.svg");
 const BEVY_TEXT_SVG: &str = include_str!("../assets/bevy_text.svg");
 
 const BIRD_SOURCE_FILL: &str = "#ececec"; // EKEKEKEKEK, I think a cat got in here
-const BIRD_COLORS: [&str; 3] = ["#ececec", "#b2b2b2", "#787878"];
 const BIRD_NAMES: [&str; 3] = ["Birb 0 (front)", "Birb 1 (middle)", "Birb 2 (back)"];
 
-// TODO: These should all really just be configurable at the fade/keyframe callsite or something.
-const FADE_DURATION: f32 = 0.6;
-const KEYFRAME_DURATION: f32 = 0.7;
-const HOLD_DURATION: f32 = 1.1;
 const BIRD_SLIDE_OFFSET: f32 = 20.0;
 
-const SPLASH_CAMERA_ORDER: isize = 9999;
+/// Customization options for the splashscreen
+#[derive(Resource)]
+pub struct BevySplashscreenOptions {
+    /// Set the background for the splashscreen.
+    ///
+    /// Defaults to a darkish grey: #232326
+    pub background_color: Color,
+    /// The splashscreen uses a separate 2D camera to display over all others.
+    ///
+    /// This sets the camera ordering for it.
+    ///
+    /// Defaults to 9999.
+    pub splash_camera_order: isize,
+    /// Color hexes of the bevy birbs!
+    ///
+    /// Defaults to:
+    /// ["#ececec" /* cat got in here */, "#b2b2b2", "#787878"]
+    pub bird_colors: [String; 3],
 
+    // Animation options
+    // TODO: Maybe worthwhile making it a bit more granular, but this is good enough for now.
+    /// How long each fade takes.
+    ///
+    /// Defaults to 0.6s
+    pub fade_duration: f32,
+    /// How long each keyframe takes.
+    ///
+    /// Defaults to 0.7s
+    pub keyframe_duration: f32,
+    /// How long the full splashscreen holds before it starts fading.
+    ///
+    /// Defaults to 1.1s
+    pub hold_duration: f32,
+}
+
+impl Default for BevySplashscreenOptions {
+    fn default() -> Self {
+        Self {
+            background_color: Color::srgb_u8(0x23, 0x23, 0x26),
+            splash_camera_order: 9999,
+            bird_colors: [
+                "#ececec".to_owned(),
+                "#b2b2b2".to_owned(),
+                "#787878".to_owned(),
+            ],
+
+            fade_duration: 0.6,
+            keyframe_duration: 0.7,
+            hold_duration: 1.1,
+        }
+    }
+}
+
+/// Add to your project to set up the splashscreen.
+///
+/// This adds [`VelloPlugin`] if it is not already added.
+///
+/// `commands.trigger(StartBevySplashscreen)` to play the splash.
+/// `commands.trigger(SkipBevySplashscreen)` to end it early.
+/// `app.add_observer(|_: On<BevySplashscreenEnded>| { })` to react to end.
 #[derive(Default)]
 pub struct BevySplashscreenPlugin;
 
@@ -38,7 +91,7 @@ impl Plugin for BevySplashscreenPlugin {
             app.add_plugins(VelloPlugin::default());
         }
 
-        app.insert_resource(SplashBg(Color::srgb_u8(0x23, 0x23, 0x26)))
+        app.init_resource::<BevySplashscreenOptions>()
             .register_type::<Fade>()
             .register_type::<KeyframeInterp>()
             .register_type::<KeyFrame>()
@@ -61,9 +114,6 @@ pub struct SkipBevySplashscreen;
 /// Emitted after the splash finishes
 #[derive(Event, Default)]
 pub struct BevySplashscreenEnded;
-
-#[derive(Resource)]
-struct SplashBg(Color);
 
 #[derive(Component)]
 struct SplashEntity;
@@ -135,7 +185,7 @@ fn bake_bird(fill_hex: &str) -> VelloSvg {
 fn on_start(
     _: On<StartBevySplashscreen>,
     existing: Option<Res<Splash>>,
-    bg: Res<SplashBg>,
+    options: Res<BevySplashscreenOptions>,
     mut commands: Commands,
     mut svgs: ResMut<Assets<VelloSvg>>,
 ) {
@@ -144,7 +194,7 @@ fn on_start(
     }
 
     let bg_hex = {
-        let c = bg.0.to_srgba();
+        let c = options.background_color.to_srgba();
         format!(
             "#{:02x}{:02x}{:02x}",
             (c.red * 255.0).round() as u8,
@@ -157,8 +207,8 @@ fn on_start(
         Name::new("Splash camera"),
         Camera2d,
         Camera {
-            order: SPLASH_CAMERA_ORDER,
-            clear_color: ClearColorConfig::Custom(bg.0),
+            order: options.splash_camera_order,
+            clear_color: ClearColorConfig::Custom(options.background_color),
             ..default()
         },
         VelloView,
@@ -205,7 +255,7 @@ fn on_start(
         .id();
 
     let bodies: [Handle<VelloSvg>; 3] =
-        std::array::from_fn(|i| svgs.add(bake_bird(BIRD_COLORS[i])));
+        std::array::from_fn(|i| svgs.add(bake_bird(&options.bird_colors[i])));
 
     let cutoff_svg = svgs.add(
         load_svg_from_str(&format!(
@@ -416,6 +466,7 @@ fn elapsed(time: Res<Time>, mut fade: Query<&mut Fade>, mut key: Query<&mut Keyf
 
 fn splash_dispatch(
     time: Res<Time>,
+    options: Res<BevySplashscreenOptions>,
     splash: Option<ResMut<Splash>>,
     splash_entities: Query<Entity, With<SplashEntity>>,
     fades: Query<&Fade>,
@@ -437,7 +488,7 @@ fn splash_dispatch(
         (c, Step::Fade(splash.bevy)),
     ]);
 
-    c += FADE_DURATION;
+    c += options.fade_duration;
     tasks.extend([
         (c, Step::Show(splash.cutoff)),
         (c, Step::Show(splash.birds[1])),
@@ -448,7 +499,7 @@ fn splash_dispatch(
         (c, Step::Keyframe(splash.birds[0])),
     ]);
 
-    c += KEYFRAME_DURATION + HOLD_DURATION;
+    c += options.keyframe_duration + options.hold_duration;
     tasks.push((c, Step::Fade(splash.overlay)));
 
     for (t, step) in tasks {
@@ -465,19 +516,23 @@ fn splash_dispatch(
 
     let overlay_covered = fades
         .get(splash.overlay)
-        .is_ok_and(|fade| fade.start && fade.elapsed >= FADE_DURATION);
+        .is_ok_and(|fade| fade.start && fade.elapsed >= options.fade_duration);
     if overlay_covered {
         end_splash(&mut commands, &splash_entities);
     }
 }
 
-fn fade(fades: Query<(&Fade, &VelloSvg2d)>, mut svgs: ResMut<Assets<VelloSvg>>) {
+fn fade(
+    fades: Query<(&Fade, &VelloSvg2d)>,
+    mut svgs: ResMut<Assets<VelloSvg>>,
+    options: Res<BevySplashscreenOptions>,
+) {
     for (fade, vello) in &fades {
         if !fade.start {
             continue;
         }
 
-        let t = (fade.elapsed / FADE_DURATION).clamp(0.0, 1.0);
+        let t = (fade.elapsed / options.fade_duration).clamp(0.0, 1.0);
         let alpha = fade.from + (fade.to - fade.from) * t;
         if let Some(svg) = svgs.get_mut(&vello.0) {
             svg.alpha = alpha;
@@ -485,7 +540,10 @@ fn fade(fades: Query<(&Fade, &VelloSvg2d)>, mut svgs: ResMut<Assets<VelloSvg>>) 
     }
 }
 
-fn keyframe(mut keyed: Query<(&mut Transform, &KeyframeInterp)>) {
+fn keyframe(
+    mut keyed: Query<(&mut Transform, &KeyframeInterp)>,
+    options: Res<BevySplashscreenOptions>,
+) {
     for (mut transform, interp) in &mut keyed {
         if !interp.start {
             continue;
@@ -495,19 +553,19 @@ fn keyframe(mut keyed: Query<(&mut Transform, &KeyframeInterp)>) {
             interp.keyframe.end.translation,
             interp
                 .translation
-                .sample_clamped(interp.elapsed / KEYFRAME_DURATION),
+                .sample_clamped(interp.elapsed / options.keyframe_duration),
         );
         transform.rotation = interp.keyframe.start.rotation.slerp(
             interp.keyframe.end.rotation,
             interp
                 .rotation
-                .sample_clamped(interp.elapsed / KEYFRAME_DURATION),
+                .sample_clamped(interp.elapsed / options.keyframe_duration),
         );
         transform.scale = interp.keyframe.start.scale.lerp(
             interp.keyframe.end.scale,
             interp
                 .scale
-                .sample_clamped(interp.elapsed / KEYFRAME_DURATION),
+                .sample_clamped(interp.elapsed / options.keyframe_duration),
         );
     }
 }

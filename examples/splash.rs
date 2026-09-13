@@ -1,6 +1,7 @@
 use bevy::{prelude::*, window::PresentMode};
 use built_with_bevy::{
-    BevySplashscreenEnded, BevySplashscreenPlugin, SkipBevySplashscreen, StartBevySplashscreen,
+    BevySplashscreenEnded, BevySplashscreenOptions, BevySplashscreenPlugin, SkipBevySplashscreen,
+    StartBevySplashscreen,
 };
 
 fn main() {
@@ -12,6 +13,10 @@ fn main() {
             }),
             ..default()
         }))
+        .insert_resource(BevySplashscreenOptions {
+            bird_colors: ["#FF0000".into(), "#00FF00".into(), "#0000FF".into()],
+            ..default()
+        })
         .add_plugins(BevySplashscreenPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(Update, debug_keys)
@@ -27,6 +32,7 @@ fn debug_keys(keys: Res<ButtonInput<KeyCode>>, mut commands: Commands) {
     if keys.just_pressed(KeyCode::Space) {
         commands.trigger(StartBevySplashscreen);
     }
+
     if keys.just_pressed(KeyCode::KeyS) {
         commands.trigger(SkipBevySplashscreen);
     }
