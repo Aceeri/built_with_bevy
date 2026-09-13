@@ -9,12 +9,10 @@
 //! The plugin adds [`VelloPlugin`] with default settings if you haven't already
 //! added it yourself.
 
-use std::sync::{Arc, Mutex};
-
 use bevy::{
     prelude::*,
     render::{
-        Render, RenderApp, RenderSystems,
+        ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems,
         extract_component::{ExtractComponent, ExtractComponentPlugin},
         render_resource::PipelineCache,
         view::{ExtractedWindows, ViewTarget},
@@ -124,10 +122,8 @@ impl Plugin for BevySplashscreenPlugin {
             app.add_plugins(VelloPlugin::default());
         }
 
-        let readiness = RenderReadiness::default();
-
         app.init_resource::<BevySplashscreenOptions>()
-            .insert_resource(readiness.clone())
+            .init_resource::<RenderReadiness>()
             .add_plugins(ExtractComponentPlugin::<SplashCamera>::default())
             .register_type::<Fade>()
             .register_type::<KeyframeInterp>()
@@ -140,12 +136,17 @@ impl Plugin for BevySplashscreenPlugin {
 
         match app.get_sub_app_mut(RenderApp) {
             Some(render_app) => {
-                render_app.insert_resource(readiness).add_systems(
-                    Render,
-                    record_render_readiness.in_set(RenderSystems::Cleanup),
-                );
+                render_app
+                    .init_resource::<RenderReadiness>()
+                    .add_systems(ExtractSchedule, sync_render_readiness)
+                    .add_systems(
+                        Render,
+                        record_render_readiness.in_set(RenderSystems::Cleanup),
+                    );
             }
-            None => readiness.set(RenderReadinessState::READY),
+            None => {
+                app.insert_resource(RenderReadiness::READY);
+            }
         }
     }
 }
@@ -153,21 +154,8 @@ impl Plugin for BevySplashscreenPlugin {
 #[derive(Component, Clone, ExtractComponent)]
 struct SplashCamera;
 
-#[derive(Resource, Clone, Default)]
-struct RenderReadiness(Arc<Mutex<RenderReadinessState>>);
-
-impl RenderReadiness {
-    fn get(&self) -> RenderReadinessState {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    fn set(&self, state: RenderReadinessState) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = state;
-    }
-}
-
-#[derive(Clone, Copy, Default, Debug)]
-struct RenderReadinessState {
+#[derive(Resource, Clone, Copy, Default, Debug)]
+struct RenderReadiness {
     // a window has presented at least one frame.
     // TODO: maybe find SplashCamera and check specifically whether
     // THAT window has presented at least once?
@@ -178,7 +166,7 @@ struct RenderReadinessState {
     camera_rendered: bool,
 }
 
-impl RenderReadinessState {
+impl RenderReadiness {
     const READY: Self = Self {
         window_presented: true,
         pipelines_idle: true,
@@ -191,19 +179,23 @@ impl RenderReadinessState {
 }
 
 fn record_render_readiness(
-    readiness: Res<RenderReadiness>,
+    mut readiness: ResMut<RenderReadiness>,
     windows: Res<ExtractedWindows>,
     pipeline_cache: Res<PipelineCache>,
     splash_views: Query<(), (With<SplashCamera>, With<ViewTarget>)>,
 ) {
-    readiness.set(RenderReadinessState {
+    *readiness = RenderReadiness {
         window_presented: windows
             .windows
             .values()
             .any(|window| !window.needs_initial_present),
         pipelines_idle: pipeline_cache.waiting_pipelines().next().is_none(),
         camera_rendered: !splash_views.is_empty(),
-    });
+    };
+}
+
+fn sync_render_readiness(readiness: Res<RenderReadiness>, mut main_world: ResMut<MainWorld>) {
+    main_world.insert_resource(*readiness);
 }
 
 /// Trigger this to play the splashscreen. Ignored if a splash is already running.
@@ -610,9 +602,7 @@ fn splash_dispatch(
 
     if !splash.started {
         splash.waited += real.delta_secs();
-        let state = readiness.get();
-        if !state.ready() {
-            // info!("splash waiting on render world: {state:?}");
+        if !readiness.ready() {
             return;
         }
 
