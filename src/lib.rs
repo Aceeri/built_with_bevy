@@ -9,7 +9,17 @@
 //! The plugin adds [`VelloPlugin`] with default settings if you haven't already
 //! added it yourself.
 
-use bevy::prelude::*;
+use std::sync::{Arc, Mutex};
+
+use bevy::{
+    prelude::*,
+    render::{
+        Render, RenderApp, RenderSystems,
+        extract_component::{ExtractComponent, ExtractComponentPlugin},
+        render_resource::PipelineCache,
+        view::{ExtractedWindows, ViewTarget},
+    },
+};
 use bevy_vello::{VelloPlugin, integrations::svg::load_svg_from_str, prelude::*};
 
 const BIRD_SVG: &str = include_str!("../assets/bird-0.svg");
@@ -18,8 +28,10 @@ const WITH_SVG: &str = include_str!("../assets/with.svg");
 const BEVY_TEXT_SVG: &str = include_str!("../assets/bevy_text.svg");
 
 const BIRD_SOURCE_FILL: &str = "#ececec"; // EKEKEKEKEK, I think a cat got in here
+const BIRD_SOURCE_BG_FILL: &str = "#232326";
 const BEVY_TEXT_SOURCE_FILL: &str = "#ececec";
 const BUILT_TEXT_SOURCE_FILL: &str = "#78787f";
+const WITH_TEXT_SOURCE_FILL: &str = "#78787f";
 const BIRD_NAMES: [&str; 3] = ["Birb 0 (front)", "Birb 1 (middle)", "Birb 2 (back)"];
 
 const BIRD_SLIDE_OFFSET: f32 = 20.0;
@@ -42,6 +54,21 @@ pub struct BevySplashscreenOptions {
     /// Defaults to:
     /// [#ececec /* cat got in here */, #b2b2b2, #787878]
     pub bird_colors: [Color; 3],
+
+    /// Color of the "BEVY" text.
+    ///
+    /// Defaults to #ececec
+    pub bevy_text_color: Color,
+
+    /// Color of the "built" text.
+    ///
+    /// Defaults to #78787f
+    pub built_text_color: Color,
+
+    /// Color of the "with" text.
+    ///
+    /// Defaults to #78787f
+    pub with_text_color: Color,
 
     // Animation options
     // TODO: Maybe worthwhile making it a bit more granular, but this is good enough for now.
@@ -70,6 +97,10 @@ impl Default for BevySplashscreenOptions {
                 Color::srgb_u8(0x78, 0x78, 0x78),
             ],
 
+            bevy_text_color: Color::srgb_u8(0xec, 0xec, 0xec),
+            built_text_color: Color::srgb_u8(0x78, 0x78, 0x7f),
+            with_text_color: Color::srgb_u8(0x78, 0x78, 0x7f),
+
             fade_duration: 0.6,
             keyframe_duration: 0.7,
             hold_duration: 1.1,
@@ -93,7 +124,11 @@ impl Plugin for BevySplashscreenPlugin {
             app.add_plugins(VelloPlugin::default());
         }
 
+        let readiness = RenderReadiness::default();
+
         app.init_resource::<BevySplashscreenOptions>()
+            .insert_resource(readiness.clone())
+            .add_plugins(ExtractComponentPlugin::<SplashCamera>::default())
             .register_type::<Fade>()
             .register_type::<KeyframeInterp>()
             .register_type::<KeyFrame>()
@@ -102,7 +137,73 @@ impl Plugin for BevySplashscreenPlugin {
             .add_observer(on_trigger_fade)
             .add_observer(on_trigger_keyframe)
             .add_systems(Update, (splash_dispatch, elapsed, fade, keyframe).chain());
+
+        match app.get_sub_app_mut(RenderApp) {
+            Some(render_app) => {
+                render_app.insert_resource(readiness).add_systems(
+                    Render,
+                    record_render_readiness.in_set(RenderSystems::Cleanup),
+                );
+            }
+            None => readiness.set(RenderReadinessState::READY),
+        }
     }
+}
+
+#[derive(Component, Clone, ExtractComponent)]
+struct SplashCamera;
+
+#[derive(Resource, Clone, Default)]
+struct RenderReadiness(Arc<Mutex<RenderReadinessState>>);
+
+impl RenderReadiness {
+    fn get(&self) -> RenderReadinessState {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn set(&self, state: RenderReadinessState) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = state;
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+struct RenderReadinessState {
+    // a window has presented at least one frame.
+    // TODO: maybe find SplashCamera and check specifically whether
+    // THAT window has presented at least once?
+    window_presented: bool,
+    // no render pipelines are queued or still compiling.
+    pipelines_idle: bool,
+    // the splash camera made it through extraction and has a view target.
+    camera_rendered: bool,
+}
+
+impl RenderReadinessState {
+    const READY: Self = Self {
+        window_presented: true,
+        pipelines_idle: true,
+        camera_rendered: true,
+    };
+
+    fn ready(&self) -> bool {
+        self.window_presented && self.pipelines_idle && self.camera_rendered
+    }
+}
+
+fn record_render_readiness(
+    readiness: Res<RenderReadiness>,
+    windows: Res<ExtractedWindows>,
+    pipeline_cache: Res<PipelineCache>,
+    splash_views: Query<(), (With<SplashCamera>, With<ViewTarget>)>,
+) {
+    readiness.set(RenderReadinessState {
+        window_presented: windows
+            .windows
+            .values()
+            .any(|window| !window.needs_initial_present),
+        pipelines_idle: pipeline_cache.waiting_pipelines().next().is_none(),
+        camera_rendered: !splash_views.is_empty(),
+    });
 }
 
 /// Trigger this to play the splashscreen. Ignored if a splash is already running.
@@ -169,6 +270,7 @@ fn bird_keyframes() -> [KeyFrame; 3] {
 
 #[derive(Resource)]
 struct Splash {
+    started: bool,
     elapsed: f32,
 
     birds: [Entity; 3],
@@ -177,6 +279,9 @@ struct Splash {
     bevy: Entity,
     cutoff: Entity,
     overlay: Entity,
+
+    // time waited for render pipelines
+    waited: f32,
 }
 
 fn color_to_hex(color: Color) -> String {
@@ -189,14 +294,13 @@ fn color_to_hex(color: Color) -> String {
     )
 }
 
-fn bake_bird(fill: Color) -> VelloSvg {
-    let recolored = BIRD_SVG.replace(BIRD_SOURCE_FILL, &color_to_hex(fill));
-    load_svg_from_str(&recolored).expect("bird svg failed to parse")
-}
+fn bake_svg_fill(svg: &str, fills: &[(&str, Color)]) -> VelloSvg {
+    let mut recolored = svg.to_owned();
+    for (placeholder, fill) in fills {
+        recolored = recolored.replace(placeholder, &color_to_hex(*fill));
+    }
 
-fn bake_bevy_text(fill: Color) -> VelloSvg {
-    let recolored = BIRD_SVG.replace(BIRD_SOURCE_FILL, &color_to_hex(fill));
-    load_svg_from_str(&recolored).expect("bird svg failed to parse")
+    load_svg_from_str(&recolored).expect("bundled svg failed to parse")
 }
 
 fn on_start(
@@ -214,6 +318,7 @@ fn on_start(
 
     commands.spawn((
         Name::new("Splash camera"),
+        SplashCamera,
         Camera2d,
         Camera {
             order: options.splash_camera_order,
@@ -228,7 +333,10 @@ fn on_start(
     let built = commands
         .spawn((
             Name::new("'Built' text"),
-            VelloSvg2d(svgs.add(load_svg_from_str(BUILT_SVG).expect("built svg failed to parse"))),
+            VelloSvg2d(svgs.add(bake_svg_fill(
+                BUILT_SVG,
+                &[(BUILT_TEXT_SOURCE_FILL, options.built_text_color)],
+            ))),
             VelloSvgAnchor::Center,
             Transform::from_xyz(55.0, 60.0, 0.0),
             Visibility::Hidden,
@@ -240,7 +348,10 @@ fn on_start(
     let with = commands
         .spawn((
             Name::new("'With' text"),
-            VelloSvg2d(svgs.add(load_svg_from_str(WITH_SVG).expect("with svg failed to parse"))),
+            VelloSvg2d(svgs.add(bake_svg_fill(
+                WITH_SVG,
+                &[(WITH_TEXT_SOURCE_FILL, options.with_text_color)],
+            ))),
             VelloSvgAnchor::Center,
             Transform::from_xyz(180.0, 60.0, 0.0),
             Visibility::Hidden,
@@ -252,9 +363,10 @@ fn on_start(
     let bevy = commands
         .spawn((
             Name::new("Bevy text"),
-            VelloSvg2d(
-                svgs.add(load_svg_from_str(BEVY_TEXT_SVG).expect("bevy text svg failed to parse")),
-            ),
+            VelloSvg2d(svgs.add(bake_svg_fill(
+                BEVY_TEXT_SVG,
+                &[(BEVY_TEXT_SOURCE_FILL, options.bevy_text_color)],
+            ))),
             VelloSvgAnchor::Center,
             Transform::from_xyz(90.0, -20.0, 0.0),
             Visibility::Hidden,
@@ -263,8 +375,15 @@ fn on_start(
         ))
         .id();
 
-    let bodies: [Handle<VelloSvg>; 3] =
-        std::array::from_fn(|i| svgs.add(bake_bird(options.bird_colors[i])));
+    let bodies: [Handle<VelloSvg>; 3] = std::array::from_fn(|i| {
+        svgs.add(bake_svg_fill(
+            BIRD_SVG,
+            &[
+                (BIRD_SOURCE_FILL, options.bird_colors[i]),
+                (BIRD_SOURCE_BG_FILL, options.background_color),
+            ],
+        ))
+    });
 
     let cutoff_svg = svgs.add(
         load_svg_from_str(&format!(
@@ -349,6 +468,8 @@ fn on_start(
     commands.entity(cutoff).insert(ChildOf(birds[0]));
 
     commands.insert_resource(Splash {
+        started: false,
+        waited: 0.0,
         elapsed: 0.0,
         birds,
         built,
@@ -475,7 +596,9 @@ fn elapsed(time: Res<Time>, mut fade: Query<&mut Fade>, mut key: Query<&mut Keyf
 
 fn splash_dispatch(
     time: Res<Time>,
+    real: Res<Time<Real>>,
     options: Res<BevySplashscreenOptions>,
+    readiness: Res<RenderReadiness>,
     splash: Option<ResMut<Splash>>,
     splash_entities: Query<Entity, With<SplashEntity>>,
     fades: Query<&Fade>,
@@ -484,6 +607,18 @@ fn splash_dispatch(
     let Some(mut splash) = splash else {
         return;
     };
+
+    if !splash.started {
+        splash.waited += real.delta_secs();
+        let state = readiness.get();
+        if !state.ready() {
+            // info!("splash waiting on render world: {state:?}");
+            return;
+        }
+
+        info!("splash render ready after {:.0}ms", splash.waited * 1000.0);
+        splash.started = true;
+    }
 
     let last = splash.elapsed;
     splash.elapsed += time.delta_secs();
