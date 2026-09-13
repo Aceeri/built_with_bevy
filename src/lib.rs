@@ -18,6 +18,8 @@ const WITH_SVG: &str = include_str!("../assets/with.svg");
 const BEVY_TEXT_SVG: &str = include_str!("../assets/bevy_text.svg");
 
 const BIRD_SOURCE_FILL: &str = "#ececec"; // EKEKEKEKEK, I think a cat got in here
+const BEVY_TEXT_SOURCE_FILL: &str = "#ececec";
+const BUILT_TEXT_SOURCE_FILL: &str = "#78787f";
 const BIRD_NAMES: [&str; 3] = ["Birb 0 (front)", "Birb 1 (middle)", "Birb 2 (back)"];
 
 const BIRD_SLIDE_OFFSET: f32 = 20.0;
@@ -35,11 +37,11 @@ pub struct BevySplashscreenOptions {
     ///
     /// Defaults to 9999.
     pub splash_camera_order: isize,
-    /// Color hexes of the bevy birbs!
+    /// Colors of the bevy birbs, front to back.
     ///
     /// Defaults to:
-    /// ["#ececec" /* cat got in here */, "#b2b2b2", "#787878"]
-    pub bird_colors: [String; 3],
+    /// [#ececec /* cat got in here */, #b2b2b2, #787878]
+    pub bird_colors: [Color; 3],
 
     // Animation options
     // TODO: Maybe worthwhile making it a bit more granular, but this is good enough for now.
@@ -63,9 +65,9 @@ impl Default for BevySplashscreenOptions {
             background_color: Color::srgb_u8(0x23, 0x23, 0x26),
             splash_camera_order: 9999,
             bird_colors: [
-                "#ececec".to_owned(),
-                "#b2b2b2".to_owned(),
-                "#787878".to_owned(),
+                Color::srgb_u8(0xec, 0xec, 0xec),
+                Color::srgb_u8(0xb2, 0xb2, 0xb2),
+                Color::srgb_u8(0x78, 0x78, 0x78),
             ],
 
             fade_duration: 0.6,
@@ -177,8 +179,23 @@ struct Splash {
     overlay: Entity,
 }
 
-fn bake_bird(fill_hex: &str) -> VelloSvg {
-    let recolored = BIRD_SVG.replace(BIRD_SOURCE_FILL, fill_hex);
+fn color_to_hex(color: Color) -> String {
+    let c = color.to_srgba();
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        (c.red * 255.0).round() as u8,
+        (c.green * 255.0).round() as u8,
+        (c.blue * 255.0).round() as u8
+    )
+}
+
+fn bake_bird(fill: Color) -> VelloSvg {
+    let recolored = BIRD_SVG.replace(BIRD_SOURCE_FILL, &color_to_hex(fill));
+    load_svg_from_str(&recolored).expect("bird svg failed to parse")
+}
+
+fn bake_bevy_text(fill: Color) -> VelloSvg {
+    let recolored = BIRD_SVG.replace(BIRD_SOURCE_FILL, &color_to_hex(fill));
     load_svg_from_str(&recolored).expect("bird svg failed to parse")
 }
 
@@ -193,15 +210,7 @@ fn on_start(
         return;
     }
 
-    let bg_hex = {
-        let c = options.background_color.to_srgba();
-        format!(
-            "#{:02x}{:02x}{:02x}",
-            (c.red * 255.0).round() as u8,
-            (c.green * 255.0).round() as u8,
-            (c.blue * 255.0).round() as u8
-        )
-    };
+    let bg_hex = color_to_hex(options.background_color);
 
     commands.spawn((
         Name::new("Splash camera"),
@@ -255,7 +264,7 @@ fn on_start(
         .id();
 
     let bodies: [Handle<VelloSvg>; 3] =
-        std::array::from_fn(|i| svgs.add(bake_bird(&options.bird_colors[i])));
+        std::array::from_fn(|i| svgs.add(bake_bird(options.bird_colors[i])));
 
     let cutoff_svg = svgs.add(
         load_svg_from_str(&format!(
