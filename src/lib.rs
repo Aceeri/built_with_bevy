@@ -1,20 +1,23 @@
 //! 'Built with Bevy' Splashscreen
 //!
-//! Add [`BevySplashscreenPlugin::default()`] to your app, then:
+//! Add [`BevySplashscreenPlugin`] to your app, then:
 //!
 //! - `commands.trigger(StartBevySplashscreen)` to play the splash.
 //! - `commands.trigger(SkipBevySplashscreen)` to end it early.
-//! - `app.add_observer(|_: On<BevySplashscreenEnded>, ...| ...)` to react to end.
+//! - `app.add_observer(|_: On<BevySplashscreenEnded>| { })` to react to end.
+//!
+//! The plugin adds [`VelloPlugin`] with default settings if you haven't already
+//! added it yourself.
 
 use bevy::prelude::*;
-use bevy_vello::{integrations::svg::load_svg_from_str, prelude::*};
+use bevy_vello::{VelloPlugin, integrations::svg::load_svg_from_str, prelude::*};
 
 const BIRD_SVG: &str = include_str!("../assets/bird-0.svg");
 const BUILT_SVG: &str = include_str!("../assets/built.svg");
 const WITH_SVG: &str = include_str!("../assets/with.svg");
 const BEVY_TEXT_SVG: &str = include_str!("../assets/bevy_text.svg");
 
-const BIRD_SOURCE_FILL: &str = "#ececec";
+const BIRD_SOURCE_FILL: &str = "#ececec"; // EKEKEKEKEK, I think a cat got in here
 const BIRD_COLORS: [&str; 3] = ["#ececec", "#b2b2b2", "#787878"];
 const BIRD_NAMES: [&str; 3] = ["Birb 0 (front)", "Birb 1 (middle)", "Birb 2 (back)"];
 
@@ -31,6 +34,10 @@ pub struct BevySplashscreenPlugin;
 
 impl Plugin for BevySplashscreenPlugin {
     fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<VelloPlugin>() {
+            app.add_plugins(VelloPlugin::default());
+        }
+
         app.insert_resource(SplashBg(Color::srgb_u8(0x23, 0x23, 0x26)))
             .register_type::<Fade>()
             .register_type::<KeyframeInterp>()

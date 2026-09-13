@@ -1,26 +1,17 @@
-use bevy::{asset::AssetMetaCheck, prelude::*, window::PresentMode};
-use bevy_vello::VelloPlugin;
+use bevy::{prelude::*, window::PresentMode};
 use built_with_bevy::{
     BevySplashscreenEnded, BevySplashscreenPlugin, SkipBevySplashscreen, StartBevySplashscreen,
 };
 
 fn main() {
     App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(AssetPlugin {
-                    meta_check: AssetMetaCheck::Never,
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        present_mode: PresentMode::AutoNoVsync,
-                        ..default()
-                    }),
-                    ..default()
-                }),
-        )
-        .add_plugins(VelloPlugin::default())
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                present_mode: PresentMode::AutoNoVsync,
+                ..default()
+            }),
+            ..default()
+        }))
         .add_plugins(BevySplashscreenPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(Update, debug_keys)
