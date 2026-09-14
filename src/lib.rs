@@ -668,7 +668,7 @@ fn fade(
 
         let t = (fade.elapsed / options.fade_duration).clamp(0.0, 1.0);
         let alpha = fade.from + (fade.to - fade.from) * t;
-        if let Some(svg) = svgs.get_mut(&vello.0) {
+        if let Some(mut svg) = svgs.get_mut(&vello.0) {
             svg.alpha = alpha;
         }
     }
