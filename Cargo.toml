@@ -1,8 +1,15 @@
 [package]
 name = "built_with_bevy"
-description = "Splashscreen animation for bevy games"
+description = "Splashscreen animation for Bevy games"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Aceeri/built_with_bevy"
+readme = "README.md"
+keywords = ["bevy", "splashscreen", "splash", "gamedev"]
+categories = ["game-development", "graphics"]
+exclude = ["*.gif"]
 
 [dependencies]
 bevy = "0.19.1"

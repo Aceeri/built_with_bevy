@@ -12,7 +12,7 @@ fn main() {
             }),
             ..default()
         }))
-        .add_plugins(BevySplashscreenPlugin::default())
+        .add_plugins(BevySplashscreenPlugin)
         .add_systems(Startup, setup)
         .add_systems(Update, debug_keys)
         .add_observer(on_ended)
